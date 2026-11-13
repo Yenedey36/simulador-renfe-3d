@@ -2,6 +2,9 @@
 
 **Práctica: Visualización de Datos Geográficos (Sesión 8)**
 
+<img width="1106" height="856" alt="Captura de pantalla 2026-11-13 195136" src="https://github.com/user-attachments/assets/be691326-b1a9-47f7-ab13-f55aff6b5d09" />
+
+
 Este proyecto es una visualización 3D interactiva desarrollada con **Three.js** que muestra en tiempo real (con tiempo acelerado) el tráfico de trenes de Alta Velocidad, Larga y Media Distancia por toda la Península Ibérica.
 
 A diferencia de visualizaciones estáticas, este simulador no se limita a colocar puntos en un mapa, sino que recrea la red logística completa del país cruzando horarios, estaciones y rutas de trenes oficiales.
@@ -47,3 +50,8 @@ El sistema de renderizado evalúa el estado de cada estación y tren en cada fot
 *   **Desplegable Superior:** Permite aislar un tren específico de la red logística para ver su recorrido y tiempo estimado de llegada a la próxima estación.
 *   **Botón "Seguir tren":** Activa el modo de cámara en persecución.
 *   **Clic en Estaciones:** Usa el ratón para pinchar en cualquier punto del mapa y abrir su tablón horario oficial de Renfe. Al hacer clic en cualquier ruta de ese tablón, el simulador saltará a ese tren automáticamente.
+
+
+## Video DEMO
+
+**Enlace:** https://drive.google.com/file/d/1-JOQGuMu2t9wTZBDKs8wON0GSgXZhg2a/view?usp=sharing
