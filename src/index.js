@@ -1,47 +1,44 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
 
-// --- VARIABLES GLOBALES ---
 let scene, renderer, camera, camcontrols;
 let mapa, mapsx, mapsy;
 let scale = 5;
 
-// Límites de la Península
+// Limites mapa
 let minlon = -9.95, maxlon = 3.8;
 let minlat = 35.55, maxlat = 44.45;
 
 let texturacargada = false;
-
-// Arrays para guardar las mallas y líneas
 let objetos = [];
 let lineas;
 let lineaRutaCompleta;
 const bolas = [];
 
-// Geometría y material reutilizable para los trenes
 const geoBola = new THREE.SphereGeometry(0.025, 12, 12);
 const matBola = new THREE.MeshBasicMaterial({ color: 0xffff00 });
 
-// Fecha base para la simulación
+let radarMesh;
+const radarUniforms = {
+  u_time: { value: 0.0 },
+  u_color: { value: new THREE.Color(0x00ff88) },
+};
+
 const fechaInicio = new Date(2026, 10, 11);
 let fechaActual;
-let totalMinutos = 360; // Empezamos a las 6:00 de la mañana
+let totalMinutos = 360; 
 
-// Variables de la interfaz de usuario
 let fecha2show, infoRutaUI, selectorUI, btnSeguirUI, panelEstacionUI;
 let pactivos = 0;
 
-// Arrays para procesar los datos de Renfe
 const datosSitycleta = [], datosEstaciones = [];
 const infoTrenes = new Map();
 const horariosPorEstacion = new Map();
 
-// Variables de estado e interacción
 let trenSeleccionado = "TODOS";
 let estacionSeleccionada = null;
 let seguirTren = false;
 
-// Raycaster para detectar clics en el mapa
 const raycaster = new THREE.Raycaster();
 const raton = new THREE.Vector2();
 let posClicInicio = { x: 0, y: 0 };
@@ -55,9 +52,6 @@ init();
 animate();
 
 function init() {
-  // --- INTERFAZ ---
-  
-  // Título y reloj flotante
   fecha2show = document.createElement("div");
   fecha2show.style.position = "absolute";
   fecha2show.style.top = "15px";
@@ -71,7 +65,6 @@ function init() {
   fecha2show.innerHTML = "Cargando datos...";
   document.body.appendChild(fecha2show);
 
-  // Contenedor para el selector y botones
   const panelControles = document.createElement("div");
   panelControles.style.position = "absolute";
   panelControles.style.top = "45px";
@@ -100,7 +93,6 @@ function init() {
 
   document.body.appendChild(panelControles);
 
-  // Panel lateral de horarios (aparece al clicar una estación)
   panelEstacionUI = document.createElement("div");
   panelEstacionUI.style.position = "absolute";
   panelEstacionUI.style.top = "100px";
@@ -117,7 +109,6 @@ function init() {
   panelEstacionUI.style.display = "none";
   document.body.appendChild(panelEstacionUI);
 
-  // --- SETUP DE THREE.JS ---
   scene = new THREE.Scene();
   camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
   camera.position.z = 4.5;
@@ -127,6 +118,36 @@ function init() {
   document.body.appendChild(renderer.domElement);
 
   camcontrols = new OrbitControls(camera, renderer.domElement);
+
+  const geoRadar = new THREE.PlaneGeometry(0.4, 0.4);
+  const matRadar = new THREE.ShaderMaterial({
+    uniforms: radarUniforms,
+    transparent: true,
+    depthWrite: false,
+    vertexShader: `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform float u_time;
+      uniform vec3 u_color;
+      varying vec2 vUv;
+
+      void main() {
+        float d = distance(vUv, vec2(0.5));
+        float onda = sin(d * 35.0 - u_time * 4.0);
+        float anillo = smoothstep(0.1, 0.5, onda) * smoothstep(0.5, 0.05, d);
+        gl_FragColor = vec4(u_color, anillo * 0.85);
+      }
+    `,
+  });
+  radarMesh = new THREE.Mesh(geoRadar, matRadar);
+  radarMesh.position.z = 0.015;
+  radarMesh.visible = false;
+  scene.add(radarMesh);
 
   renderer.domElement.addEventListener("pointerdown", (e) => {
     posClicInicio.x = e.clientX;
@@ -141,7 +162,6 @@ function init() {
     }
   });
 
-  // Cargar la textura del mapa
   const tx1 = new THREE.TextureLoader().load("src/mapa.png", function (texture) {
     const txaspectRatio = texture.image.width / texture.image.height;
     mapsy = scale;
@@ -152,7 +172,6 @@ function init() {
     mapa.material.needsUpdate = true;
     texturacargada = true;
 
-    // Fetch en cadena: primero leemos estaciones, luego horarios
     fetch("src/stops.txt")
       .then((response) => {
         if (!response.ok) throw new Error("Error: " + response.statusText);
@@ -179,12 +198,9 @@ function init() {
   });
 }
 
-// Fórmula matemática para ajustar la latitud a la proyección Mercator (para que cuadre con el PNG)
 function latAMercator(lat) {
   return Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360));
 }
-
-// --- PROCESAMIENTO DE DATOS ---
 
 function procesarCSVEstaciones(content) {
   const sep = ",";
@@ -208,8 +224,6 @@ function procesarCSVEstaciones(content) {
       let lon = parseFloat(columna[indices.lon]);
       
       if (isNaN(lat) || isNaN(lon)) continue;
-      
-      // Filtramos paradas que queden fuera del mapa
       if (lat < minlat || lat > maxlat || lon < minlon || lon > maxlon) continue;
 
       let mlon = Map2Range(lon, minlon, maxlon, -mapsx / 2, mapsx / 2);
@@ -226,7 +240,7 @@ function procesarCSVEstaciones(content) {
       });
 
       horariosPorEstacion.set(idEst, []);
-      Esfera(mlon, mlat, 0, 0.015, 10, 10, 0x009688);
+      Esfera(mlon, mlat, 0, 0.015, 10, 10, 0x009688); 
     }
   }
 }
@@ -254,7 +268,6 @@ function procesarCSVAlquileres(content) {
       const trip_id = columna[indices.trip_id].trim();
       const codTren = trip_id.substring(0, 6);
 
-      // Nos quedamos solo con la primera circulación del tren para no duplicarlo todos los días
       if (!trenesUnicos.has(codTren)) {
         trenesUnicos.set(codTren, trip_id);
       }
@@ -269,7 +282,6 @@ function procesarCSVAlquileres(content) {
       const t_salida = convertirFecha(strSalida);
       const seq = parseInt(columna[indices.seq], 10);
 
-      // Guardamos las horas para el tablón de salidas de la estación
       if (horariosPorEstacion.has(stop_id)) {
         horariosPorEstacion.get(stop_id).push({
           tren: codTren,
@@ -278,7 +290,6 @@ function procesarCSVAlquileres(content) {
         });
       }
 
-      // Si es el mismo viaje, creamos un tramo conectando la parada anterior a esta
       if (paradaAnterior && paradaAnterior.trip_id === trip_id && seq > paradaAnterior.seq) {
         datosSitycleta.push({
           tren: codTren,
@@ -288,7 +299,6 @@ function procesarCSVAlquileres(content) {
           p_fin: stop_id,
         });
 
-        // Actualizamos la info del trayecto completo para poder buscarlo luego
         if (!infoTrenes.has(codTren)) {
           infoTrenes.set(codTren, {
             id: codTren,
@@ -300,7 +310,7 @@ function procesarCSVAlquileres(content) {
           });
         } else {
           const info = infoTrenes.get(codTren);
-          info.destino = mapaEstaciones.get(stop_id).nombre;
+          info.destino = mapaEstaciones.get(stop_id).nombre; 
           info.t_fin = t_llegada;
           info.paradas.push(stop_id);
         }
@@ -315,7 +325,6 @@ function procesarCSVAlquileres(content) {
     }
   }
 
-  // Llenamos el desplegable HTML con todos los trayectos
   infoTrenes.forEach((info, codTren) => {
     const opt = document.createElement("option");
     opt.value = codTren;
@@ -323,8 +332,6 @@ function procesarCSVAlquileres(content) {
     selectorUI.appendChild(opt);
   });
 }
-
-// --- INTERACTIVIDAD ---
 
 function detectarClicEstacion(event) {
   if (!texturacargada) return;
@@ -343,7 +350,6 @@ function detectarClicEstacion(event) {
   }
 }
 
-// Crea la ventanita estilo "panel de llegadas/salidas" al clicar una estación
 function mostrarPanelEstacion(estacion) {
   estacionSeleccionada = estacion;
   trenSeleccionado = "TODOS";
@@ -352,7 +358,10 @@ function mostrarPanelEstacion(estacion) {
   btnSeguirUI.innerText = "Seguir tren: OFF";
   btnSeguirUI.disabled = true;
 
-  // Limpiamos la línea de ruta si había alguna pintada
+  radarMesh.position.set(estacion.longmap, estacion.latmap, 0.015);
+  radarUniforms.u_color.value.setHex(0x00ff88);
+  radarMesh.visible = true;
+
   if (lineaRutaCompleta) {
     scene.remove(lineaRutaCompleta);
     lineaRutaCompleta.geometry.dispose();
@@ -373,6 +382,7 @@ function mostrarPanelEstacion(estacion) {
   btnCerrar.style.float = "right";
   btnCerrar.onclick = () => {
     estacionSeleccionada = null;
+    radarMesh.visible = false;
     panelEstacionUI.style.display = "none";
     infoRutaUI.innerHTML = "";
   };
@@ -380,7 +390,6 @@ function mostrarPanelEstacion(estacion) {
   panelEstacionUI.appendChild(cabecera);
   panelEstacionUI.appendChild(document.createElement("hr"));
 
-  // Ordenamos todos los trenes que pasan por aquí de forma cronológica
   const lista = horariosPorEstacion.get(estacion.id) || [];
   lista.sort((a, b) => a.tiempo - b.tiempo);
 
@@ -391,7 +400,6 @@ function mostrarPanelEstacion(estacion) {
     return;
   }
 
-  // Rellenamos el tablón horario
   for (const item of lista) {
     const info = infoTrenes.get(item.tren);
     if (!info) continue;
@@ -416,7 +424,7 @@ function mostrarPanelEstacion(estacion) {
 
 function seleccionarTren(codTren) {
   trenSeleccionado = codTren;
-  estacionSeleccionada = null; // Cerramos el panel de estación al seguir un tren
+  estacionSeleccionada = null; 
   panelEstacionUI.style.display = "none";
 
   if (lineaRutaCompleta) {
@@ -427,6 +435,7 @@ function seleccionarTren(codTren) {
 
   if (trenSeleccionado === "TODOS") {
     seguirTren = false;
+    radarMesh.visible = false;
     btnSeguirUI.innerText = "Seguir tren: OFF";
     btnSeguirUI.disabled = true;
     infoRutaUI.innerHTML = "";
@@ -435,9 +444,10 @@ function seleccionarTren(codTren) {
     camcontrols.update();
   } else {
     btnSeguirUI.disabled = false;
+    radarUniforms.u_color.value.setHex(0xffaa00);
+    radarMesh.visible = true;
     const info = infoTrenes.get(trenSeleccionado);
     if (info) {
-      // Adelantamos el reloj para que coincida justo con la salida de ese tren
       totalMinutos = (info.t_inicio - fechaInicio) / 60000;
       dibujarRutaCompleta(info.paradas);
     }
@@ -456,7 +466,6 @@ function alternarSeguimiento() {
   }
 }
 
-// Traza una línea naranja fija por todas las paradas del tren seleccionado
 function dibujarRutaCompleta(idsParadas) {
   const pts = [];
   for (const id of idsParadas) {
@@ -470,8 +479,6 @@ function dibujarRutaCompleta(idsParadas) {
   lineaRutaCompleta = new THREE.Line(geo, mat);
   scene.add(lineaRutaCompleta);
 }
-
-// --- FUNCIONES AUXILIARES ---
 
 function Map2Range(val, vmin, vmax, dmin, dmax) {
   let t = 1 - (vmax - val) / (vmax - vmin);
@@ -508,10 +515,7 @@ function convertirFecha(horaStr) {
   );
 }
 
-// --- BUCLE DE ANIMACIÓN ---
-
 function actualizarFecha() {
-  // Si estamos mirando un tren concreto el tiempo avanza un poco más lento
   totalMinutos += trenSeleccionado === "TODOS" ? 0.25 : 0.15;
 
   if (trenSeleccionado !== "TODOS") {
@@ -519,25 +523,22 @@ function actualizarFecha() {
     if (info) {
       const minFin = (info.t_fin - fechaInicio) / 60000;
       const minIni = (info.t_inicio - fechaInicio) / 60000;
-      // Si el tren llega a su destino final, reiniciamos el reloj para hacer un bucle infinito
       if (totalMinutos > minFin + 5) {
         totalMinutos = minIni;
       }
     }
   } else if (totalMinutos >= 1440) {
-    totalMinutos = 360; // Cuando pasa de medianoche volvemos a las 6 AM
+    totalMinutos = 360;
   }
 
   fechaActual = new Date(fechaInicio.getTime() + totalMinutos * 60000);
 }
 
 function filtraparadasActivas() {
-  // Ocultamos todos los trenes antes de calcular los que están activos en este frame
   for (const b of bolas) {
     b.visible = false;
   }
 
-  // Nos quedamos solo con los tramos que tocan según el reloj actual
   const registrosFiltrados = datosSitycleta.filter((registro) => {
     const activoEnHora = registro.t_inicio <= fechaActual && registro.t_fin >= fechaActual;
     if (!activoEnHora) return false;
@@ -546,7 +547,6 @@ function filtraparadasActivas() {
       return registro.tren === trenSeleccionado;
     }
 
-    // Si hay una estación pinchada, solo vemos sus trenes
     if (estacionSeleccionada) {
       const info = infoTrenes.get(registro.tren);
       return info && info.paradas.includes(estacionSeleccionada.id);
@@ -565,7 +565,6 @@ function filtraparadasActivas() {
   const pts = [];
   let nBolas = 0;
   
-  // Posicionamos los trenes y dibujamos sus estelas
   for (const r of registrosFiltrados) {
     const a = buscaEstacion(r.p_inicio);
     const b = buscaEstacion(r.p_fin);
@@ -578,7 +577,6 @@ function filtraparadasActivas() {
         const dur = Math.max(r.t_fin - r.t_inicio, 60000);
         const t = Math.min(1, Math.max(0, (fechaActual - r.t_inicio) / dur));
         
-        // Reutilizamos esferas amarillas si ya existen en el array, si no creamos nuevas
         if (!bolas[nBolas]) {
           const m = new THREE.Mesh(geoBola, matBola);
           scene.add(m);
@@ -591,10 +589,11 @@ function filtraparadasActivas() {
         bolas[nBolas].position.set(bx, by, 0.02);
         bolas[nBolas].visible = true;
 
-        // Si seguimos a un tren, actualizamos la info de UI y movemos la cámara
         if (trenSeleccionado !== "TODOS") {
           const minRestantes = Math.max(0, Math.round((r.t_fin - fechaActual) / 60000));
           infoRutaUI.innerHTML = `Tramo: ${a.nombre} -> ${b.nombre} (${minRestantes} min)`;
+
+          radarMesh.position.set(bx, by, 0.015);
 
           if (seguirTren) {
             camcontrols.target.lerp(new THREE.Vector3(bx, by, 0), 0.1);
@@ -615,7 +614,6 @@ function filtraparadasActivas() {
 
   pactivos = registrosFiltrados.length;
 
-  // Coloreamos las estaciones según su estado actual
   const estacionesA = new Set(registrosFiltrados.map((r) => r.p_inicio));
   const estacionesB = new Set(registrosFiltrados.map((r) => r.p_fin));
 
@@ -629,12 +627,12 @@ function filtraparadasActivas() {
         objetos[i].material.color.set(0x005aa0);
       else {
         if (estacionesA.has(estacion.id))
-          objetos[i].material.color.set(0x8a2be2); // Salida
-        else objetos[i].material.color.set(0xc81e3c); // Destino
+          objetos[i].material.color.set(0x8a2be2);
+        else objetos[i].material.color.set(0xc81e3c); 
       }
       objetos[i].scale.set(2, 2, 2);
     } else {
-      objetos[i].material.color.set(0x009688); // Reposo
+      objetos[i].material.color.set(0x009688);
       objetos[i].scale.set(1, 1, 1);
     }
     i++;
@@ -645,6 +643,8 @@ function animate() {
   if (texturacargada) {
     actualizarFecha();
     filtraparadasActivas();
+
+    radarUniforms.u_time.value += 0.08;
 
     fecha2show.innerHTML = fechaActual.toLocaleString("es-ES", opcionesfecha);
     fecha2show.innerHTML += " · " + pactivos + " trenes en circulación";
